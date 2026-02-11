@@ -1,0 +1,29 @@
+# requirements.txt
+
+# FastAPI and server
+fastapi[standerd]
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# Salesforce integration
+simple-salesforce
+
+# Database
+motor==3.3.2
+pymongo==4.6.1
+
+# Security and encryption
+cryptography
+python-jose[cryptography]
+passlib[bcrypt]
+
+# HTTP requests
+requests
+httpx
+
+# Environment variables
+python-dotenv
+
+# CORS
+python-multipart
