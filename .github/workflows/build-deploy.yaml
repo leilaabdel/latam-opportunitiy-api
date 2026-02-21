@@ -1,11 +1,11 @@
-name: Build, Push to Docker Hub, and Export Tar
+name: Build, Push to Docker Hub, and Release
 
 on:
   push:
     branches: [ "main" ]
 
 jobs:
-  build-and-export:
+  build-push-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -17,7 +17,6 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Build and Push Backend (Dockerfile at root)
       - name: Build and Push Backend
         uses: docker/build-push-action@v5
         with:
@@ -25,20 +24,24 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/latam-salesforce-api:latest
-          # Load into local Docker daemon for tar export
           load: true
 
-      # Create the .tar.gz archive
       - name: Save and Compress Image
         run: |
           mkdir -p export
           docker save ${{ secrets.DOCKERHUB_USERNAME }}/latam-salesforce-api:latest -o export/backend.tar
           tar -czf latam-salesforce-api-bundle.tar.gz -C export .
 
-      # Upload as a GitHub Artifact
-      - name: Upload Downloadable Archive
-        uses: actions/upload-artifact@v4
+      - name: Generate release tag
+        id: tag
+        run: echo "tag=build-$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: latam-salesforce-api-bundle
-          path: latam-salesforce-api-bundle.tar.gz
-          retention-days: 7
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: "Build ${{ steps.tag.outputs.tag }}"
+          body: "Automated release from main branch push."
+          files: latam-salesforce-api-bundle.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
