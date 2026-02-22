@@ -33,4 +33,5 @@ EXPOSE 8000
 
 # Use the system python to run the module uvicorn
 # This avoids the "can't open file" error because it uses the internal entrypoint
+ENTRYPOINT ["/opt/venv/bin/python"]
 CMD ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
