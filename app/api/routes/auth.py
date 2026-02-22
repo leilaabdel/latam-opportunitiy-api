@@ -13,17 +13,17 @@ _FORTINET_RED = "#DA291C"
 _FORTINET_DARK = "#1A1A2E"
 _FORTINET_GRAY = "#4A4A68"
 
-_BASE_STYLES = """
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
+_BASE_STYLES = f"""
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+    body {{
         font-family: 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         display: flex;
         justify-content: center;
         align-items: center;
         min-height: 100vh;
         background: #f5f5f7;
-    }
-    .card {
+    }}
+    .card {{
         background: #fff;
         padding: 2.5rem 3rem;
         border-radius: 8px;
@@ -31,28 +31,25 @@ _BASE_STYLES = """
         text-align: center;
         max-width: 420px;
         width: 90%;
-    }
-    .logo-area {
+    }}
+    .logo-area {{
         margin-bottom: 1.5rem;
-    }
-    .logo-area svg {
+    }}
+    .logo-area svg {{
         width: 160px;
         height: auto;
-    }
-    .divider {
+    }}
+    .divider {{
         width: 48px;
         height: 3px;
-        background: %(red)s;
+        background: {_FORTINET_RED};
         margin: 0 auto 1.5rem;
         border-radius: 2px;
-    }
-""" % {"red": _FORTINET_RED}
+    }}
+"""
 
 _FORTINET_LOGO_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 103.4">
-  <path fill="#DA291C" d="M156.8 0h-53.5L84.6 51.7 65.8 0H12.3L0 103.4h44.5l5.5-48.8 23.3 48.8h23.1l31.9-48.8-5.7 48.8h44.5z"/>
-  <path fill="#1A1A2E" d="M200.8 38.1h55.4V6.3h-96.5v97.1h41.1V71.5h42.9V38.1zM298.2 71.5h42.8V38.1h-42.8V38h-14v-0.1h-.1V6.3h-41v97.1h41.1V71.5h14zM432.1 6.3h-41.1v97.1h41.1V71.5h35.8v31.9H509V6.3h-41.1v31.8h-35.8z"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" x="0" y="0" version="1.1" viewBox="0 0 487.6 55"><path d="M279.9 11.7V0h13.4v54.8h-13.4V11.7zM220.9 0h51.7v11.8h-24.3v43.1H235V11.8h-14.1V0zm266.7 0v11.8h-24.3v43.1H450V11.8h-14.1V0h51.7zM0 0h58v11.8H13.4v11.7h38v11.8h-38v19.5H0V0zm374.5 0h54v11.8h-40.6v9.8h33.3v11.8h-33.3v9.8h41.3V55h-54.7V0zm-10.3 15.5v39.3h-13.4V15.5c0-2.1-1.6-3.7-3.7-3.7h-30v43.1h-13.4V0h45c8.5 0 15.5 7 15.5 15.5zM200.3 0h-45.7v54.8H168V35.3h30c1.6.1 2.9 1.4 2.9 3v16.6h13.4V38.1c0-2.9-1.6-5.4-4-6.8 2.9-2.7 4.7-6.6 4.7-10.8v-5.8c.1-8.1-6.5-14.7-14.7-14.7zm1.4 20.5c0 1.6-1.3 3-3 3H168V11.8h30.7c1.6 0 3 1.3 3 3v5.7z"/><path d="M144.2 20.4v14.2H122V20.4h22.2zM93.9 54.8H116V40.6H93.9v14.2zm50.3-42.9c0-6.6-5.3-11.9-11.9-11.9h-10.2v14.2h22.1v-2.3zM93.9 0v14.2H116V0H93.9zM65.7 20.4v14.2h22.1V20.4H65.7zM122 54.8h10.2c6.6 0 11.9-5.3 11.9-11.9v-2.3H122v14.2zM65.7 42.9c0 6.6 5.3 11.9 11.9 11.9h10.2V40.6H65.7v2.3zm0-31v2.3h22.1V0H77.6C71 0 65.7 5.3 65.7 11.9z" fill="#da291c"/></svg>
 """
 
 
