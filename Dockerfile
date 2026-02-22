@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y gcc g++ && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-RUN python -m venv /opt/venv
+RUN python -m venv --copies /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 RUN pip install --no-cache-dir --upgrade pip && \
@@ -27,5 +27,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-ENTRYPOINT ["/opt/venv/bin/python"]
 CMD ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
