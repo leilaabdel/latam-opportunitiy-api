@@ -1,4 +1,4 @@
-# 1. Builder Stage - MUST match Distroless (3.11)
+# 1. Builder Stage
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -17,7 +17,9 @@ FROM gcr.io/distroless/python3-debian12
 
 WORKDIR /app
 
-COPY --from=builder /opt/venv/lib /opt/venv/lib
+# Copy the entire venv (bin + lib) so uvicorn and all packages are available
+COPY --from=builder /opt/venv /opt/venv
+
 COPY . .
 
 ENV PYTHONPATH="/opt/venv/lib/python3.11/site-packages"
@@ -25,4 +27,5 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
+ENTRYPOINT ["/opt/venv/bin/python"]
 CMD ["-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
