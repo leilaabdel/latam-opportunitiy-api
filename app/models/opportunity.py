@@ -1,91 +1,66 @@
-# app/models/opportunity.py
 from pydantic import BaseModel, Field
 from typing import Optional
-from datetime import date
 
-class OpportunityDetail(BaseModel):
-    """Detailed opportunity information from Salesforce"""
-    id: str = Field(..., description="Salesforce Opportunity ID")
-    name: str = Field(..., description="Opportunity name")
-    stage: str = Field(..., description="Current stage of the opportunity")
-    amount: Optional[float] = Field(None, description="Opportunity amount in dollars")
-    close_date: Optional[str] = Field(None, description="Expected close date (YYYY-MM-DD)")
-    probability: Optional[int] = Field(None, ge=0, le=100, description="Win probability percentage")
-    type: Optional[str] = Field(None, description="Opportunity type")
-    owner: Optional[str] = Field(None, description="Opportunity owner name")
-    account: Optional[str] = Field(None, description="Associated account name")
-    lead_source: Optional[str] = Field(None, description="Lead source")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "id": "006XXXXXXXXXXXXXXX",
-                "name": "Acme Corp - 1000 Licenses",
-                "stage": "Negotiation/Review",
-                "amount": 150000.0,
-                "close_date": "2025-03-15",
-                "probability": 75,
-                "type": "New Business",
-                "owner": "John Doe",
-                "account": "Acme Corporation",
-                "lead_source": "Web"
-            }
-        }
 
-class OpportunityExistsResponse(BaseModel):
-    """Response for opportunity existence check"""
-    exists: bool = Field(..., description="Whether the opportunity exists")
-    opportunity: Optional[OpportunityDetail] = Field(None, description="Opportunity details if found")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "exists": True,
-                "opportunity": {
-                    "id": "006XXXXXXXXXXXXXXX",
-                    "name": "Acme Corp - 1000 Licenses",
-                    "stage": "Negotiation/Review",
-                    "amount": 150000.0,
-                    "close_date": "2025-03-15",
-                    "probability": 75,
-                    "type": "New Business",
-                    "owner": "John Doe",
-                    "account": "Acme Corporation",
-                    "lead_source": "Web"
-                }
-            }
-        }
+class AccountInfo(BaseModel):
+    accountId: str
+    accountName: str
+    industry: Optional[str] = None
+    country: Optional[str] = None
+    website: Optional[str] = None
 
-class OpportunitySearchResponse(BaseModel):
-    """Response for opportunity search and list operations"""
-    count: int = Field(..., description="Total number of opportunities found")
-    opportunities: list[OpportunityDetail] = Field(..., description="List of opportunities")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "count": 2,
-                "opportunities": [
-                    {
-                        "id": "006XXXXXXXXXXXXXXX",
-                        "name": "Acme Corp - 1000 Licenses",
-                        "stage": "Negotiation/Review",
-                        "amount": 150000.0,
-                        "close_date": "2025-03-15",
-                        "probability": 75,
-                        "type": "New Business",
-                        "owner": "John Doe",
-                        "account": "Acme Corporation",
-                        "lead_source": "Web"
-                    }
-                ]
-            }
-        }
 
-class OpportunityQueryParams(BaseModel):
-    """Query parameters for opportunity search"""
-    sf_user_id: str = Field(..., description="Salesforce user ID")
-    name: Optional[str] = Field(None, description="Filter by opportunity name (partial match)")
-    stage: Optional[str] = Field(None, description="Filter by stage name (exact match)")
-    owner_id: Optional[str] = Field(None, description="Filter by owner ID")
-    limit: int = Field(10, ge=1, le=100, description="Maximum number of results")
+class OwnerInfo(BaseModel):
+    userId: str
+    fullName: Optional[str] = None
+    email: Optional[str] = None
+
+
+class ProductLineItem(BaseModel):
+    lineItemId: str
+    productId: Optional[str] = None
+    productCode: Optional[str] = None
+    productName: Optional[str] = None
+    quantity: Optional[float] = None
+    unitPrice: Optional[float] = None
+    totalPrice: Optional[float] = None
+    type: Optional[str] = None
+    family: Optional[str] = None
+
+
+class OpportunityValidationResponse(BaseModel):
+    """Response for GET /opportunities/{id}/validate"""
+    valid: bool
+    opportunityId: str
+    opportunityName: Optional[str] = None
+    stage: Optional[str] = None
+    closeDate: Optional[str] = None
+    account: Optional[AccountInfo] = None
+    validationMessages: list[str] = Field(default_factory=list)
+
+
+class OpportunityDetailResponse(BaseModel):
+    """Response for GET /opportunities/{id}"""
+    opportunityId: str
+    opportunityName: str
+    stage: str
+    closeDate: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    probability: Optional[float] = None
+    description: Optional[str] = None
+    owner: Optional[OwnerInfo] = None
+    account: Optional[AccountInfo] = None
+    products: list[ProductLineItem] = Field(default_factory=list)
+    createdDate: Optional[str] = None
+    lastModifiedDate: Optional[str] = None
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response per Section 9 of requirements"""
+    error: str
+    message: str
+    detail: Optional[str] = None
+    field: Optional[str] = None
+    requestId: Optional[str] = None
+    timestamp: Optional[str] = None

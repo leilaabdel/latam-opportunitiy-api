@@ -1,58 +1,129 @@
-# app/api/routes/opportunities.py
-from fastapi import APIRouter, Depends, Query
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from typing import Optional
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from simple_salesforce import Salesforce
+from simple_salesforce.exceptions import SalesforceExpiredSession
+
+from app.core.dependencies import get_sf_client
 from app.models.opportunity import (
-    OpportunityDetail,
-    OpportunityExistsResponse,
-    OpportunitySearchResponse
+    ErrorResponse,
+    OpportunityDetailResponse,
+    OpportunityValidationResponse,
 )
 from app.services.opportunity_service import OpportunityService
-from app.db.mongodb import get_database
 
-router = APIRouter(prefix="/opportunities", tags=["Opportunities"])
+router = APIRouter(tags=["Opportunities"])
 
-@router.get("/{opp_id}", response_model=OpportunityExistsResponse)
-async def check_opportunity(
-    opp_id: str,
-    sf_user_id: str = Query(..., description="Salesforce user ID"),
-    db: AsyncIOMotorDatabase = Depends(get_database)
-) -> OpportunityExistsResponse:
-    """Check if an opportunity exists in Salesforce"""
-    service = OpportunityService(db)
-    result = await service.check_opportunity_exists(sf_user_id, opp_id)
-    return OpportunityExistsResponse(**result)
 
-@router.get("/", response_model=OpportunitySearchResponse)
-async def search_opportunities(
-    sf_user_id: str = Query(..., description="Salesforce user ID"),
-    name: Optional[str] = Query(None, description="Filter by opportunity name (partial match)"),
-    stage: Optional[str] = Query(None, description="Filter by stage name (exact match)"),
-    owner_id: Optional[str] = Query(None, description="Filter by owner ID"),
-    limit: int = Query(10, ge=1, le=100, description="Maximum number of results"),
-    db: AsyncIOMotorDatabase = Depends(get_database)
-) -> OpportunitySearchResponse:
-    """Search for opportunities with optional filters"""
-    service = OpportunityService(db)
-    result = await service.search_opportunities(
-        sf_user_id=sf_user_id,
-        name=name,
-        stage=stage,
-        owner_id=owner_id,
-        limit=limit
-    )
-    return OpportunitySearchResponse(**result)
+def _request_id(x_request_id: str | None = Header(None, alias="X-Request-ID")) -> str | None:
+    return x_request_id
 
-@router.get("/user/my-opportunities", response_model=OpportunitySearchResponse)
-async def get_my_opportunities(
-    sf_user_id: str = Query(..., description="Salesforce user ID"),
-    limit: int = Query(20, ge=1, le=100, description="Maximum number of results"),
-    db: AsyncIOMotorDatabase = Depends(get_database)
-) -> OpportunitySearchResponse:
-    """Get opportunities owned by the authenticated user"""
-    service = OpportunityService(db)
-    result = await service.get_user_opportunities(
-        sf_user_id=sf_user_id,
-        limit=limit
-    )
-    return OpportunitySearchResponse(**result)
+
+@router.get(
+    "/opportunities/{opportunity_id}/validate",
+    response_model=OpportunityValidationResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+)
+async def validate_opportunity(
+    opportunity_id: str,
+    sf: Salesforce = Depends(get_sf_client),
+    request_id: str | None = Depends(_request_id),
+):
+    """Validate whether a Salesforce Opportunity is eligible for assessment linking."""
+    service = OpportunityService(sf)
+    try:
+        result = service.validate(opportunity_id)
+    except SalesforceExpiredSession:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "UNAUTHORIZED",
+                "message": "Salesforce session has expired. Please provide a fresh access token.",
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "SALESFORCE_UNAVAILABLE",
+                "message": "Failed to communicate with Salesforce.",
+                "detail": str(exc),
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "NOT_FOUND",
+                "message": f"No opportunity found with ID '{opportunity_id}'.",
+                "opportunityId": opportunity_id,
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    return result
+
+
+@router.get(
+    "/opportunities/{opportunity_id}",
+    response_model=OpportunityDetailResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        401: {"model": ErrorResponse},
+        502: {"model": ErrorResponse},
+    },
+)
+async def get_opportunity(
+    opportunity_id: str,
+    sf: Salesforce = Depends(get_sf_client),
+    request_id: str | None = Depends(_request_id),
+):
+    """Retrieve full details for a Salesforce Opportunity."""
+    service = OpportunityService(sf)
+    try:
+        result = service.get_detail(opportunity_id)
+    except SalesforceExpiredSession:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "UNAUTHORIZED",
+                "message": "Salesforce session has expired. Please provide a fresh access token.",
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "SALESFORCE_UNAVAILABLE",
+                "message": "Failed to communicate with Salesforce.",
+                "detail": str(exc),
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "NOT_FOUND",
+                "message": f"No opportunity found with ID '{opportunity_id}'.",
+                "opportunityId": opportunity_id,
+                "requestId": request_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    return result

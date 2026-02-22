@@ -1,299 +1,177 @@
-# app/services/opportunity_service.py
+from datetime import date, timedelta
 from simple_salesforce import Salesforce
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from fastapi import HTTPException
-from typing import Dict, Optional, List
-from datetime import datetime
-from app.core.salesforce import sf_oauth
+from simple_salesforce.exceptions import SalesforceMalformedRequest
+
+from app.models.opportunity import (
+    AccountInfo,
+    OpportunityDetailResponse,
+    OpportunityValidationResponse,
+    OwnerInfo,
+    ProductLineItem,
+)
+
+# Stages that are ineligible for assessment linking
+_CLOSED_LOST = "Closed Lost"
+_CLOSED_WON = "Closed Won"
+_MAX_PAST_CLOSE_DAYS = 180
+
+
+def _build_account(record: dict) -> AccountInfo | None:
+    acct = record.get("Account")
+    if not acct or not acct.get("Id"):
+        return None
+    return AccountInfo(
+        accountId=acct["Id"],
+        accountName=acct.get("Name", ""),
+        industry=acct.get("Industry"),
+        country=acct.get("BillingCountry"),
+        website=acct.get("Website"),
+    )
+
+
+def _build_owner(record: dict) -> OwnerInfo | None:
+    owner = record.get("Owner")
+    if not owner or not owner.get("Id"):
+        return None
+    return OwnerInfo(
+        userId=owner["Id"],
+        fullName=owner.get("Name"),
+        email=owner.get("Email"),
+    )
+
+
+def _build_products(line_items: dict | None) -> list[ProductLineItem]:
+    if not line_items or not line_items.get("records"):
+        return []
+    products = []
+    for li in line_items["records"]:
+        prod = li.get("Product2") or {}
+        products.append(
+            ProductLineItem(
+                lineItemId=li["Id"],
+                productId=prod.get("Id"),
+                productCode=prod.get("ProductCode"),
+                productName=prod.get("Name"),
+                quantity=li.get("Quantity"),
+                unitPrice=li.get("UnitPrice"),
+                totalPrice=li.get("TotalPrice"),
+                type=prod.get("Family"),
+                family=prod.get("Family"),
+            )
+        )
+    return products
+
 
 class OpportunityService:
-    """
-    Service for Salesforce opportunity operations
-    Handles authentication, token refresh, and SOQL queries
-    """
-    
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.db = db
-    
-    async def get_sf_client(self, sf_user_id: str) -> Salesforce:
-        """
-        Get authenticated Salesforce client for a user
-        Automatically refreshes access token using stored refresh token
-        
-        Args:
-            sf_user_id: Salesforce user ID
-            
-        Returns:
-            Authenticated Salesforce client
-            
-        Raises:
-            HTTPException: If user not connected or authentication fails
-        """
-        # Get stored refresh token
-        user_token = await self.db.sf_tokens.find_one({'sf_user_id': sf_user_id})
-        
-        if not user_token:
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "Not connected to Salesforce",
-                    "message": "Please authorize your Salesforce account first",
-                    "auth_url": "/auth/login"
-                }
-            )
-        
-        # Decrypt refresh token
+    """Stateless service — receives a Salesforce client per call."""
+
+    def __init__(self, sf: Salesforce):
+        self.sf = sf
+
+    # ------------------------------------------------------------------
+    # Validate (Section 4 of requirements)
+    # ------------------------------------------------------------------
+
+    def validate(self, opportunity_id: str) -> OpportunityValidationResponse | None:
+        """Return validation response, or None if the opportunity does not exist."""
+        query = (
+            "SELECT Id, Name, StageName, CloseDate, "
+            "AccountId, Account.Id, Account.Name, Account.Industry, "
+            "Account.BillingCountry "
+            "FROM Opportunity "
+            f"WHERE Id = '{opportunity_id}'"
+        )
+
         try:
-            refresh_token = sf_oauth.decrypt(user_token['refresh_token'])
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to decrypt token: {str(e)}"
+            result = self.sf.query(query)
+        except SalesforceMalformedRequest:
+            return None  # bad ID format → treat as not found
+
+        if result["totalSize"] == 0:
+            return None
+
+        opp = result["records"][0]
+        stage = opp.get("StageName", "")
+        close_date_str = opp.get("CloseDate")
+        account = _build_account(opp)
+
+        messages: list[str] = []
+
+        # VR-02
+        if stage == _CLOSED_LOST:
+            messages.append(
+                "Opportunity is in 'Closed Lost' stage and cannot receive new assessments."
             )
-        
-        # Get fresh access token (not stored, just used in memory)
+        # VR-03
+        if stage == _CLOSED_WON:
+            messages.append(
+                "Opportunity is in 'Closed Won' stage and cannot receive new assessments."
+            )
+        # VR-05
+        if close_date_str:
+            try:
+                close_date = date.fromisoformat(close_date_str)
+                cutoff = date.today() - timedelta(days=_MAX_PAST_CLOSE_DAYS)
+                if close_date < cutoff:
+                    messages.append(
+                        f"Opportunity close date ({close_date_str}) is more than {_MAX_PAST_CLOSE_DAYS} days in the past."
+                    )
+            except ValueError:
+                pass
+
+        return OpportunityValidationResponse(
+            valid=len(messages) == 0,
+            opportunityId=opp["Id"],
+            opportunityName=opp.get("Name"),
+            stage=stage,
+            closeDate=close_date_str,
+            account=account,
+            validationMessages=messages,
+        )
+
+    # ------------------------------------------------------------------
+    # Retrieve full details (Section 6 of requirements)
+    # ------------------------------------------------------------------
+
+    def get_detail(self, opportunity_id: str) -> OpportunityDetailResponse | None:
+        """Return full opportunity details, or None if not found."""
+        query = (
+            "SELECT Id, Name, StageName, CloseDate, Amount, CurrencyIsoCode, "
+            "Probability, Description, "
+            "OwnerId, Owner.Id, Owner.Name, Owner.Email, "
+            "AccountId, Account.Id, Account.Name, Account.Industry, "
+            "Account.BillingCountry, Account.Website, "
+            "CreatedDate, LastModifiedDate, "
+            "(SELECT Id, Product2Id, Product2.Id, Product2.Name, "
+            "Product2.ProductCode, Product2.Family, "
+            "Quantity, UnitPrice, TotalPrice "
+            "FROM OpportunityLineItems) "
+            "FROM Opportunity "
+            f"WHERE Id = '{opportunity_id}'"
+        )
+
         try:
-            tokens = sf_oauth.refresh_token(refresh_token)
-            
-            # Return authenticated Salesforce client
-            return Salesforce(
-                instance_url=user_token['instance_url'],
-                session_id=tokens['access_token']
-            )
-            
-        except HTTPException as e:
-            # Refresh token might be revoked or expired
-            raise HTTPException(
-                status_code=401,
-                detail={
-                    "error": "Salesforce connection expired",
-                    "message": "Please reconnect your Salesforce account",
-                    "auth_url": "/auth/login"
-                }
-            )
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to authenticate with Salesforce: {str(e)}"
-            )
-    
-    async def check_opportunity_exists(
-        self, 
-        sf_user_id: str, 
-        opp_id: str
-    ) -> Dict:
-        """
-        Check if an opportunity exists in Salesforce
-        
-        Args:
-            sf_user_id: Salesforce user ID
-            opp_id: Salesforce Opportunity ID (e.g., '006...')
-            
-        Returns:
-            Dict with exists flag and opportunity data if found
-        """
-        sf = await self.get_sf_client(sf_user_id)
-        
-        try:
-            query = f"""
-                SELECT Id, Name, StageName, Amount, CloseDate, 
-                       OwnerId, Owner.Name, AccountId, Account.Name,
-                       Probability, Type, LeadSource
-                FROM Opportunity 
-                WHERE Id = '{opp_id}'
-            """
-            
-            result = sf.query(query)
-            
-            if result['totalSize'] > 0:
-                opp = result['records'][0]
-                return {
-                    "exists": True,
-                    "opportunity": {
-                        "id": opp.get('Id'),
-                        "name": opp.get('Name'),
-                        "stage": opp.get('StageName'),
-                        "amount": opp.get('Amount'),
-                        "close_date": opp.get('CloseDate'),
-                        "probability": opp.get('Probability'),
-                        "type": opp.get('Type'),
-                        "owner": opp.get('Owner', {}).get('Name') if opp.get('Owner') else None,
-                        "account": opp.get('Account', {}).get('Name') if opp.get('Account') else None,
-                        "lead_source": opp.get('LeadSource')
-                    }
-                }
-            else:
-                return {
-                    "exists": False,
-                    "opportunity": None
-                }
-                
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Salesforce query failed: {str(e)}"
-            )
-    
-    async def search_opportunities(
-        self,
-        sf_user_id: str,
-        name: Optional[str] = None,
-        stage: Optional[str] = None,
-        owner_id: Optional[str] = None,
-        limit: int = 10
-    ) -> Dict:
-        """
-        Search for opportunities with filters
-        
-        Args:
-            sf_user_id: Salesforce user ID
-            name: Optional name filter (partial match)
-            stage: Optional stage filter (exact match)
-            owner_id: Optional owner ID filter
-            limit: Maximum results to return
-            
-        Returns:
-            Dict with opportunities list and count
-        """
-        sf = await self.get_sf_client(sf_user_id)
-        
-        # Build WHERE clause dynamically
-        conditions = []
-        
-        if name:
-            # Escape single quotes for SOQL
-            safe_name = name.replace("'", "\\'")
-            conditions.append(f"Name LIKE '%{safe_name}%'")
-        
-        if stage:
-            safe_stage = stage.replace("'", "\\'")
-            conditions.append(f"StageName = '{safe_stage}'")
-        
-        if owner_id:
-            conditions.append(f"OwnerId = '{owner_id}'")
-        
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        
-        try:
-            query = f"""
-                SELECT Id, Name, StageName, Amount, CloseDate,
-                       Owner.Name, Account.Name, Probability
-                FROM Opportunity
-                WHERE {where_clause}
-                ORDER BY CloseDate DESC
-                LIMIT {limit}
-            """
-            
-            result = sf.query(query)
-            
-            opportunities = [
-                {
-                    "id": opp.get('Id'),
-                    "name": opp.get('Name'),
-                    "stage": opp.get('StageName'),
-                    "amount": opp.get('Amount'),
-                    "close_date": opp.get('CloseDate'),
-                    "probability": opp.get('Probability'),
-                    "owner": opp.get('Owner', {}).get('Name') if opp.get('Owner') else None,
-                    "account": opp.get('Account', {}).get('Name') if opp.get('Account') else None
-                }
-                for opp in result['records']
-            ]
-            
-            return {
-                "count": result['totalSize'],
-                "opportunities": opportunities
-            }
-            
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Salesforce search failed: {str(e)}"
-            )
-    
-    async def get_user_opportunities(
-        self,
-        sf_user_id: str,
-        limit: int = 20
-    ) -> Dict:
-        """
-        Get opportunities owned by the authenticated user
-        
-        Args:
-            sf_user_id: Salesforce user ID
-            limit: Maximum results to return
-            
-        Returns:
-            Dict with user's opportunities
-        """
-        sf = await self.get_sf_client(sf_user_id)
-        
-        try:
-            # Get current user's info
-            user_info = sf.query(f"SELECT Id FROM User WHERE Id = '{sf_user_id}'")
-            
-            if user_info['totalSize'] == 0:
-                raise HTTPException(
-                    status_code=404,
-                    detail="User not found in Salesforce"
-                )
-            
-            # Query user's opportunities
-            query = f"""
-                SELECT Id, Name, StageName, Amount, CloseDate,
-                       Account.Name, Probability, Type
-                FROM Opportunity
-                WHERE OwnerId = '{sf_user_id}'
-                ORDER BY CloseDate DESC
-                LIMIT {limit}
-            """
-            
-            result = sf.query(query)
-            
-            opportunities = [
-                {
-                    "id": opp.get('Id'),
-                    "name": opp.get('Name'),
-                    "stage": opp.get('StageName'),
-                    "amount": opp.get('Amount'),
-                    "close_date": opp.get('CloseDate'),
-                    "probability": opp.get('Probability'),
-                    "type": opp.get('Type'),
-                    "account": opp.get('Account', {}).get('Name') if opp.get('Account') else None
-                }
-                for opp in result['records']
-            ]
-            
-            return {
-                "count": result['totalSize'],
-                "opportunities": opportunities
-            }
-            
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to fetch user opportunities: {str(e)}"
-            )
-    
-    async def disconnect_user(self, sf_user_id: str) -> Dict:
-        """
-        Disconnect user from Salesforce (delete stored tokens)
-        
-        Args:
-            sf_user_id: Salesforce user ID
-            
-        Returns:
-            Dict with success status
-        """
-        result = await self.db.sf_tokens.delete_one({'sf_user_id': sf_user_id})
-        
-        if result.deleted_count > 0:
-            return {
-                "success": True,
-                "message": "Successfully disconnected from Salesforce"
-            }
-        else:
-            return {
-                "success": False,
-                "message": "User was not connected to Salesforce"
-            }
+            result = self.sf.query(query)
+        except SalesforceMalformedRequest:
+            return None
+
+        if result["totalSize"] == 0:
+            return None
+
+        opp = result["records"][0]
+
+        return OpportunityDetailResponse(
+            opportunityId=opp["Id"],
+            opportunityName=opp.get("Name", ""),
+            stage=opp.get("StageName", ""),
+            closeDate=opp.get("CloseDate"),
+            amount=opp.get("Amount"),
+            currency=opp.get("CurrencyIsoCode"),
+            probability=opp.get("Probability"),
+            description=opp.get("Description"),
+            owner=_build_owner(opp),
+            account=_build_account(opp),
+            products=_build_products(opp.get("OpportunityLineItems")),
+            createdDate=opp.get("CreatedDate"),
+            lastModifiedDate=opp.get("LastModifiedDate"),
+        )

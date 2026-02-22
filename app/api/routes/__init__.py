@@ -1,3 +1,3 @@
-from . import auth, opportunities
+from . import opportunities
 
-__all__ = ["auth", "opportunities"]
+__all__ = ["opportunities"]

@@ -1,56 +1,31 @@
-# app/main.py
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from app.api.routes import auth, opportunities
-from app.db.mongodb import connect_db, close_db
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """
-    Lifecycle management for FastAPI app
-    Runs on startup and shutdown
-    """
-    # Startup: Connect to MongoDB
-    await connect_db()
-    print("✅ Connected to MongoDB")
-    
-    yield
-    
-    # Shutdown: Close MongoDB connection
-    await close_db()
-    print("❌ Closed MongoDB connection")
+from app.api.routes import opportunities
 
-# Initialize FastAPI app
 app = FastAPI(
     title="Fortinet Salesforce API",
-    description="API to check Salesforce opportunities using end-user credentials",
+    description="Stateless proxy API for Salesforce opportunity validation and retrieval.",
     version="1.0.0",
-    lifespan=lifespan
 )
 
-# CORS middleware - adjust origins for production
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to specific origins in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register routers
-app.include_router(auth.router)
-app.include_router(opportunities.router)
+app.include_router(opportunities.router, prefix="/api/v1")
 
-# Health check endpoint
-@app.get("/", tags=["health"])
-async def root():
+
+@app.get("/api/v1/health", tags=["Health"])
+async def health():
     return {
-        "status": "healthy",
-        "service": "Fortinet Salesforce API",
-        "version": "1.0.0"
+        "status": "ok",
+        "version": "1.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
-@app.get("/health", tags=["health"])
-async def health_check():
-    return {"status": "ok"}
